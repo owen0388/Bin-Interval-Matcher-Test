@@ -1,0 +1,5 @@
+{
+  "name": "Bin Interval Matcher",
+  "description": "Upload financial/statistical Excel data and find specific rows by matching numerical inputs against interval bins (e.g., (-50, -45]).",
+  "requestFramePermissions": []
+}
