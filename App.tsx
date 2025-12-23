@@ -6,7 +6,7 @@ import { isValueInInterval } from './utils/intervalParser';
 import { Search, Loader2, Database, FileUp } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
-const DEFAULT_FILE_PATH = './data.xlsx';
+const DEFAULT_FILE_PATH = '/data.xlsx';
 
 export default function App() {
   const [data, setData] = useState<ExcelRow[]>([]);
