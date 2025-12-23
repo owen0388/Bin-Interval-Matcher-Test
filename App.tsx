@@ -6,7 +6,8 @@ import { isValueInInterval } from './utils/intervalParser';
 import { Search, Loader2, Database, FileUp } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
-const DEFAULT_FILE_PATH = './Slope_Combination_Analysis.xlsx';
+// 注意：这里改为全小写，以匹配您截图中的文件名
+const DEFAULT_FILE_PATH = './slope_combination_analysis.xlsx';
 
 export default function App() {
   const [data, setData] = useState<ExcelRow[]>([]);
@@ -46,12 +47,13 @@ export default function App() {
     const loadDefaultFile = async () => {
       setIsLoading(true);
       try {
+        // 尝试获取文件
         const response = await fetch(DEFAULT_FILE_PATH);
         if (response.ok) {
           const arrayBuffer = await response.arrayBuffer();
-          parseExcelData(arrayBuffer, 'Slope_Combination_Analysis.xlsx', true);
+          parseExcelData(arrayBuffer, 'slope_combination_analysis.xlsx', true);
         } else {
-          console.log(`未找到默认文件 ${DEFAULT_FILE_PATH}，请手动上传。`);
+          console.warn(`未找到文件: ${DEFAULT_FILE_PATH} (状态码: ${response.status})`);
         }
       } catch (error) {
         console.error("自动加载文件失败:", error);
@@ -97,7 +99,6 @@ export default function App() {
     }
 
     const foundRow = data.find(row => {
-      // 兼容不同的列名格式（下划线或空格）
       const bin5 = String(row['s5_now_bin'] || row['s5 now bin'] || '');
       const bin10 = String(row['s10_now_bin'] || row['s10 now bin'] || '');
       const bin20 = String(row['s20_now_bin'] || row['s20 now bin'] || '');
@@ -143,11 +144,10 @@ export default function App() {
               指标区间匹配系统
             </h1>
             <p className="mt-3 text-lg text-gray-500">
-              系统将根据输入的数值，自动从 {isAutoLoaded ? 'Slope_Combination_Analysis.xlsx' : '上传的文件'} 中匹配对应的统计区间及结果。
+              系统已尝试读取 {DEFAULT_FILE_PATH}。
             </p>
           </div>
 
-          {/* 加载状态 */}
           {isLoading && (
             <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl shadow-sm border border-gray-100">
               <Loader2 className="w-8 h-8 text-blue-600 animate-spin mb-4" />
@@ -155,12 +155,11 @@ export default function App() {
             </div>
           )}
 
-          {/* 数据管理区域 - 如果没有自动加载成功，显示上传控件 */}
           {!isLoading && (
             <section className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
               <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
                 <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-600 text-xs font-bold">1</span>
-                数据管理
+                数据源状态
               </h2>
               <FileUpload 
                 onDataLoaded={handleDataLoaded} 
@@ -170,11 +169,10 @@ export default function App() {
             </section>
           )}
 
-          {/* 输入区域 */}
           <section className={`bg-white p-6 rounded-2xl shadow-sm border border-gray-100 transition-all duration-500 ${data.length === 0 ? 'opacity-50 pointer-events-none grayscale' : 'opacity-100'}`}>
              <h2 className="text-lg font-semibold text-gray-900 mb-6 flex items-center gap-2">
               <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-600 text-xs font-bold">2</span>
-              输入当前指标数值
+              输入指标数值
             </h2>
             
             <form onSubmit={findMatch}>
