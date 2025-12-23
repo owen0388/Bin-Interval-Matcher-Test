@@ -6,7 +6,7 @@ import { isValueInInterval } from './utils/intervalParser';
 import { Search, Loader2, Database, FileUp } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
-const DEFAULT_FILE_PATH = './data.xlsx'; // 默认读取的文件名
+const DEFAULT_FILE_PATH = './Slope_Combination_Analysis.xlsx';
 
 export default function App() {
   const [data, setData] = useState<ExcelRow[]>([]);
@@ -25,8 +25,8 @@ export default function App() {
   // 核心解析逻辑
   const parseExcelData = (arrayBuffer: ArrayBuffer, name: string, auto: boolean = false) => {
     try {
-      const data = new Uint8Array(arrayBuffer);
-      const workbook = XLSX.read(data, { type: 'array' });
+      const dataArr = new Uint8Array(arrayBuffer);
+      const workbook = XLSX.read(dataArr, { type: 'array' });
       const wsname = workbook.SheetNames[0];
       const ws = workbook.Sheets[wsname];
       const jsonData = XLSX.utils.sheet_to_json<ExcelRow>(ws);
@@ -49,9 +49,9 @@ export default function App() {
         const response = await fetch(DEFAULT_FILE_PATH);
         if (response.ok) {
           const arrayBuffer = await response.arrayBuffer();
-          parseExcelData(arrayBuffer, 'data.xlsx (内置数据)', true);
+          parseExcelData(arrayBuffer, 'Slope_Combination_Analysis.xlsx', true);
         } else {
-          console.log("未找到默认文件 data.xlsx，请手动上传。");
+          console.log(`未找到默认文件 ${DEFAULT_FILE_PATH}，请手动上传。`);
         }
       } catch (error) {
         console.error("自动加载文件失败:", error);
@@ -97,6 +97,7 @@ export default function App() {
     }
 
     const foundRow = data.find(row => {
+      // 兼容不同的列名格式（下划线或空格）
       const bin5 = String(row['s5_now_bin'] || row['s5 now bin'] || '');
       const bin10 = String(row['s10_now_bin'] || row['s10 now bin'] || '');
       const bin20 = String(row['s20_now_bin'] || row['s20 now bin'] || '');
@@ -142,7 +143,7 @@ export default function App() {
               指标区间匹配系统
             </h1>
             <p className="mt-3 text-lg text-gray-500">
-              系统将根据输入的数值，自动从 {isAutoLoaded ? 'data.xlsx' : '上传的文件'} 中匹配对应的统计区间及结果。
+              系统将根据输入的数值，自动从 {isAutoLoaded ? 'Slope_Combination_Analysis.xlsx' : '上传的文件'} 中匹配对应的统计区间及结果。
             </p>
           </div>
 
