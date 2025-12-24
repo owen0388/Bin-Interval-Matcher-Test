@@ -31,9 +31,47 @@ export default function App() {
 
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
 
-  const parseExcelData = (arrayBuffer: ArrayBuffer, name: string, auto: boolean = false) => {
+  // 辅助函数：将buffer转为十六进制字符串，用于调试
+  const getHexHeader = (u8: Uint8Array, length: number = 8) => {
+    return Array.from(u8.slice(0, length))
+      .map(b => b.toString(16).padStart(2, '0').toUpperCase())
+      .join(' ');
+  };
+
+  const parseExcelData = (buffer: ArrayBuffer | Uint8Array, name: string, auto: boolean = false) => {
     try {
-      const dataArr = new Uint8Array(arrayBuffer);
+      let dataArr: Uint8Array;
+      if (buffer instanceof Uint8Array) {
+        dataArr = buffer;
+      } else {
+        dataArr = new Uint8Array(buffer);
+      }
+
+      // --- Magic Bytes 校验 ---
+      // 标准 XLSX (ZIP) 文件头: 50 4B 03 04
+      if (dataArr.length < 4) {
+        throw new Error("文件太小，不是有效的 Excel 文件");
+      }
+      
+      const header = getHexHeader(dataArr, 4);
+      // 允许标准的 ZIP 头 (50 4B 03 04) 或常见的 OLE 头 (D0 CF 11 E0 - 旧版xls)
+      const isZip = dataArr[0] === 0x50 && dataArr[1] === 0x4B && dataArr[2] === 0x03 && dataArr[3] === 0x04;
+      const isOle = dataArr[0] === 0xD0 && dataArr[1] === 0xCF && dataArr[2] === 0x11 && dataArr[3] === 0xE0;
+
+      if (!isZip && !isOle) {
+        // 如果不是二进制格式，可能是 Git LFS 指针或 HTML 错误页
+        const textDecoder = new TextDecoder("utf-8");
+        const startText = textDecoder.decode(dataArr.slice(0, 50));
+        let errorMsg = `文件头校验失败: [${header}]`;
+        
+        if (startText.includes("version https://git-lfs")) {
+          errorMsg += " (检测到 Git LFS 指针文件，而非真实文件)";
+        } else if (startText.trim().startsWith("<!DOCTYPE") || startText.includes("<html")) {
+          errorMsg += " (检测到 HTML 内容，可能是 404 页面)";
+        }
+        throw new Error(errorMsg);
+      }
+
       const workbook = XLSX.read(dataArr, { type: 'array' });
       if (!workbook.SheetNames.length) throw new Error("Excel没有工作表");
       
@@ -85,25 +123,32 @@ export default function App() {
           const contentType = response.headers.get("content-type");
           addLog(`Content-Type: ${contentType}`);
 
-          // 某些服务器对未知文件类型返回 text/html (404 page)
           if (contentType && contentType.includes("text/html")) {
-            addLog(`❌ 跳过: 返回了 HTML 内容，可能是 404 页面`);
+            addLog(`❌ 跳过: 返回了 HTML 内容`);
             continue; 
           }
 
           const arrayBuffer = await response.arrayBuffer();
+          addLog(`下载成功，大小: ${(arrayBuffer.byteLength / 1024).toFixed(2)} KB`);
+
           // 尝试解析
-          const success = parseExcelData(arrayBuffer, filePath.replace(/^.*[\\/]/, ''), true);
-          if (success) {
-            addLog(`✅ 成功加载并解析: ${filePath}`);
-            setIsLoading(false);
-            return; 
+          try {
+            const success = parseExcelData(arrayBuffer, filePath.replace(/^.*[\\/]/, ''), true);
+            if (success) {
+              addLog(`✅ 成功加载并解析: ${filePath}`);
+              setIsLoading(false);
+              // 将日志保存以便查看（虽然成功了）
+              setDebugInfo(prev => [...prev, ...logs]);
+              return; 
+            }
+          } catch (parseErr: any) {
+             addLog(`❌ 解析异常: ${parseErr.message}`);
           }
         } else {
            addLog(`❌ 请求失败`);
         }
       } catch (error: any) {
-        addLog(`❌ 异常: ${error.message}`);
+        addLog(`❌ 网络/未知异常: ${error.message}`);
       }
     }
 
@@ -227,23 +272,25 @@ export default function App() {
                     </button>
                   </div>
                   <p className="text-sm text-gray-600 mt-1">
-                    未能在服务器上找到指定文件。请确认文件已上传至 <code>public</code> 目录且文件名正确。
+                    {loadError}
                   </p>
                   
                   {/* 调试信息折叠面板 */}
-                  <details className="mt-3 text-xs text-gray-500 bg-gray-50 p-2 rounded border border-gray-200">
+                  <details className="mt-3 text-xs text-gray-500 bg-gray-50 p-2 rounded border border-gray-200" open>
                     <summary className="cursor-pointer font-medium text-gray-700 flex items-center gap-1">
-                      <Info className="w-3 h-3" /> 查看加载日志
+                      <Info className="w-3 h-3" /> 查看详细日志 (Magic Bytes)
                     </summary>
-                    <ul className="mt-2 space-y-1 font-mono pl-1 max-h-32 overflow-y-auto">
+                    <ul className="mt-2 space-y-1 font-mono pl-1 max-h-48 overflow-y-auto">
                       {debugInfo.map((log, idx) => (
-                        <li key={idx} className="border-b border-gray-100 last:border-0 pb-1">{log}</li>
+                        <li key={idx} className={`border-b border-gray-100 last:border-0 pb-1 ${log.includes('❌') ? 'text-red-600' : 'text-gray-600'}`}>
+                          {log}
+                        </li>
                       ))}
                     </ul>
                   </details>
 
                   <p className="text-xs text-amber-600 mt-3">
-                     如果这是在预览环境中，文件实际上并不存在于服务器上，请使用下方的<strong>手动上传</strong>。
+                     <strong>提示：</strong> 如果上方日志显示 Magic Bytes 不是 <code>50 4B 03 04</code>，说明服务器上的文件已损坏，请使用下方的<strong>手动上传</strong>。
                   </p>
                 </div>
               </div>
