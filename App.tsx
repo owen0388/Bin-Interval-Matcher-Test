@@ -1,18 +1,27 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { FileUpload } from './components/FileUpload';
 import { ResultDisplay } from './components/ResultDisplay';
 import { ExcelRow, SearchInputs, MatchResult } from './types';
 import { isValueInInterval } from './utils/intervalParser';
-import { Search, Loader2, Database, FileUp } from 'lucide-react';
+import { Search, Loader2, Database, FileUp, AlertTriangle, RefreshCw, Info } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
-const DEFAULT_FILE_PATH = '/data.xlsx';
+// 扩展文件路径候选项，包含相对路径以适配不同的部署环境
+const FILE_CANDIDATES = [
+  '/Slope_Combination_Analysis.xlsx',       // 根目录大写 (标准 Vercel/Public)
+  '/slope_combination_analysis.xlsx',       // 根目录小写
+  './Slope_Combination_Analysis.xlsx',      // 相对当前路径大写
+  './slope_combination_analysis.xlsx',      // 相对当前路径小写
+  'Slope_Combination_Analysis.xlsx',        // 纯文件名
+];
 
 export default function App() {
   const [data, setData] = useState<ExcelRow[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isAutoLoaded, setIsAutoLoaded] = useState<boolean>(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [debugInfo, setDebugInfo] = useState<string[]>([]);
   
   const [inputs, setInputs] = useState<SearchInputs>({
     s5: '',
@@ -22,44 +31,88 @@ export default function App() {
 
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
 
-  // 核心解析逻辑
   const parseExcelData = (arrayBuffer: ArrayBuffer, name: string, auto: boolean = false) => {
     try {
       const dataArr = new Uint8Array(arrayBuffer);
       const workbook = XLSX.read(dataArr, { type: 'array' });
+      if (!workbook.SheetNames.length) throw new Error("Excel没有工作表");
+      
       const wsname = workbook.SheetNames[0];
       const ws = workbook.Sheets[wsname];
       const jsonData = XLSX.utils.sheet_to_json<ExcelRow>(ws);
       
+      if (jsonData.length === 0) throw new Error("数据为空");
+
       setData(jsonData);
       setFileName(name);
       setIsAutoLoaded(auto);
       setMatchResult(null);
-    } catch (error) {
+      setLoadError(null);
+      return true;
+    } catch (error: any) {
       console.error("Error parsing excel", error);
-      if (!auto) alert("解析 Excel 失败，请检查文件格式。");
+      const msg = error.message || "未知错误";
+      if (auto) {
+        throw new Error(msg);
+      } else {
+        alert(`解析失败: ${msg}`);
+      }
+      return false;
     }
   };
 
-  // 自动加载逻辑
-  useEffect(() => {
-    const loadDefaultFile = async () => {
-      setIsLoading(true);
-      try {
-        const response = await fetch(DEFAULT_FILE_PATH);
-        if (response.ok) {
-          const arrayBuffer = await response.arrayBuffer();
-          parseExcelData(arrayBuffer, 'data.xlsx', true);
-        } else {
-          console.log(`未找到默认文件 ${DEFAULT_FILE_PATH}，请手动上传。`);
-        }
-      } catch (error) {
-        console.error("自动加载文件失败:", error);
-      } finally {
-        setIsLoading(false);
-      }
+  const loadDefaultFile = async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    setDebugInfo([]);
+    
+    let logs: string[] = [];
+    const addLog = (msg: string) => {
+      console.log(msg);
+      logs.push(msg);
     };
 
+    // 遍历尝试列表
+    for (const filePath of FILE_CANDIDATES) {
+      try {
+        const url = `${filePath}?v=${Date.now()}`; // 防止缓存
+        addLog(`尝试请求: ${url}`);
+        
+        const response = await fetch(url);
+        addLog(`状态码: ${response.status} ${response.statusText}`);
+
+        if (response.ok) {
+          const contentType = response.headers.get("content-type");
+          addLog(`Content-Type: ${contentType}`);
+
+          // 某些服务器对未知文件类型返回 text/html (404 page)
+          if (contentType && contentType.includes("text/html")) {
+            addLog(`❌ 跳过: 返回了 HTML 内容，可能是 404 页面`);
+            continue; 
+          }
+
+          const arrayBuffer = await response.arrayBuffer();
+          // 尝试解析
+          const success = parseExcelData(arrayBuffer, filePath.replace(/^.*[\\/]/, ''), true);
+          if (success) {
+            addLog(`✅ 成功加载并解析: ${filePath}`);
+            setIsLoading(false);
+            return; 
+          }
+        } else {
+           addLog(`❌ 请求失败`);
+        }
+      } catch (error: any) {
+        addLog(`❌ 异常: ${error.message}`);
+      }
+    }
+
+    setDebugInfo(logs);
+    setLoadError("无法自动加载分析文件。");
+    setIsLoading(false);
+  };
+
+  useEffect(() => {
     loadDefaultFile();
   }, []);
 
@@ -68,6 +121,7 @@ export default function App() {
     setFileName(name);
     setIsAutoLoaded(false);
     setMatchResult(null);
+    setLoadError(null);
   };
 
   const handleClearFile = () => {
@@ -75,6 +129,7 @@ export default function App() {
     setFileName(null);
     setIsAutoLoaded(false);
     setMatchResult(null);
+    setLoadError(null);
     setInputs({ s5: '', s10: '', s20: '' });
   };
 
@@ -92,12 +147,11 @@ export default function App() {
     const s20Val = parseFloat(inputs.s20);
 
     if (isNaN(s5Val) || isNaN(s10Val) || isNaN(s20Val)) {
-      alert("请输入有效的数字。");
+      alert("请输入有效的数字");
       return;
     }
 
     const foundRow = data.find(row => {
-      // 兼容不同的列名格式（下划线或空格）
       const bin5 = String(row['s5_now_bin'] || row['s5 now bin'] || '');
       const bin10 = String(row['s10_now_bin'] || row['s10 now bin'] || '');
       const bin20 = String(row['s20_now_bin'] || row['s20 now bin'] || '');
@@ -128,7 +182,7 @@ export default function App() {
             {data.length > 0 && (
               <div className="flex items-center gap-2 text-sm font-medium text-blue-600 bg-blue-50 px-3 py-1.5 rounded-full border border-blue-100">
                 {isAutoLoaded ? <Database className="w-4 h-4" /> : <FileUp className="w-4 h-4" />}
-                {isAutoLoaded ? '已加载内置数据' : '已加载上传数据'}
+                {isAutoLoaded ? '内置数据' : '上传数据'}
               </div>
             )}
           </div>
@@ -143,19 +197,60 @@ export default function App() {
               指标区间匹配系统
             </h1>
             <p className="mt-3 text-lg text-gray-500">
-              系统将根据输入的数值，自动从 {isAutoLoaded ? 'data.xlsx' : '上传的文件'} 中匹配对应的统计区间及结果。
+              {data.length > 0 
+                ? `已加载 ${data.length} 条数据，请在下方输入数值进行查询。` 
+                : "系统将自动加载分析文件，或请手动上传。"}
             </p>
           </div>
 
-          {/* 加载状态 */}
+          {/* 加载中状态 */}
           {isLoading && (
             <div className="flex flex-col items-center justify-center p-12 bg-white rounded-2xl shadow-sm border border-gray-100">
               <Loader2 className="w-8 h-8 text-blue-600 animate-spin mb-4" />
-              <p className="text-gray-500 font-medium">正在读取内置数据文件...</p>
+              <p className="text-gray-500 font-medium">正在读取数据文件...</p>
             </div>
           )}
 
-          {/* 数据管理区域 - 如果没有自动加载成功，显示上传控件 */}
+          {/* 加载失败错误提示 */}
+          {!isLoading && loadError && data.length === 0 && (
+            <div className="bg-white border border-amber-200 p-6 rounded-2xl shadow-sm animate-fade-in">
+              <div className="flex items-start gap-4">
+                <div className="p-2 bg-amber-50 rounded-lg flex-shrink-0"><AlertTriangle className="w-6 h-6 text-amber-500" /></div>
+                <div className="flex-1 w-full overflow-hidden">
+                  <div className="flex justify-between items-start">
+                    <h3 className="text-lg font-bold text-gray-900">自动加载失败</h3>
+                    <button 
+                      onClick={loadDefaultFile}
+                      className="flex items-center gap-1 text-xs font-bold text-blue-600 hover:text-blue-800 bg-blue-50 px-2 py-1 rounded"
+                    >
+                      <RefreshCw className="w-3 h-3" /> 重试
+                    </button>
+                  </div>
+                  <p className="text-sm text-gray-600 mt-1">
+                    未能在服务器上找到指定文件。请确认文件已上传至 <code>public</code> 目录且文件名正确。
+                  </p>
+                  
+                  {/* 调试信息折叠面板 */}
+                  <details className="mt-3 text-xs text-gray-500 bg-gray-50 p-2 rounded border border-gray-200">
+                    <summary className="cursor-pointer font-medium text-gray-700 flex items-center gap-1">
+                      <Info className="w-3 h-3" /> 查看加载日志
+                    </summary>
+                    <ul className="mt-2 space-y-1 font-mono pl-1 max-h-32 overflow-y-auto">
+                      {debugInfo.map((log, idx) => (
+                        <li key={idx} className="border-b border-gray-100 last:border-0 pb-1">{log}</li>
+                      ))}
+                    </ul>
+                  </details>
+
+                  <p className="text-xs text-amber-600 mt-3">
+                     如果这是在预览环境中，文件实际上并不存在于服务器上，请使用下方的<strong>手动上传</strong>。
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 数据管理区域 */}
           {!isLoading && (
             <section className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
               <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
@@ -174,7 +269,7 @@ export default function App() {
           <section className={`bg-white p-6 rounded-2xl shadow-sm border border-gray-100 transition-all duration-500 ${data.length === 0 ? 'opacity-50 pointer-events-none grayscale' : 'opacity-100'}`}>
              <h2 className="text-lg font-semibold text-gray-900 mb-6 flex items-center gap-2">
               <span className="flex items-center justify-center w-6 h-6 rounded-full bg-blue-100 text-blue-600 text-xs font-bold">2</span>
-              输入当前指标数值
+              输入数值
             </h2>
             
             <form onSubmit={findMatch}>
@@ -218,7 +313,7 @@ export default function App() {
                       : 'bg-gray-300 cursor-not-allowed'}`}
                 >
                   <Search className="w-5 h-5" />
-                  即刻匹配
+                  匹配
                 </button>
               </div>
             </form>
