@@ -38,14 +38,9 @@ export default function App() {
       .join(' ');
   };
 
-  const parseExcelData = (buffer: ArrayBuffer | Uint8Array, name: string, auto: boolean = false) => {
+  const parseExcelData = (buffer: ArrayBuffer, name: string, auto: boolean = false) => {
     try {
-      let dataArr: Uint8Array;
-      if (buffer instanceof Uint8Array) {
-        dataArr = buffer;
-      } else {
-        dataArr = new Uint8Array(buffer);
-      }
+      const dataArr = new Uint8Array(buffer);
 
       // --- Magic Bytes 校验 ---
       // 标准 XLSX (ZIP) 文件头: 50 4B 03 04
@@ -72,7 +67,16 @@ export default function App() {
         throw new Error(errorMsg);
       }
 
-      const workbook = XLSX.read(dataArr, { type: 'array' });
+      // 切换到 binary string 模式解析，以匹配 FileUpload 组件的行为
+      // 有时 type: 'array' 在特定版本的 xlsx 库中会出现 "Compression method NaN" 错误
+      let bstr = "";
+      const len = dataArr.byteLength;
+      for (let i = 0; i < len; i++) {
+        bstr += String.fromCharCode(dataArr[i]);
+      }
+
+      const workbook = XLSX.read(bstr, { type: 'binary' });
+      
       if (!workbook.SheetNames.length) throw new Error("Excel没有工作表");
       
       const wsname = workbook.SheetNames[0];
