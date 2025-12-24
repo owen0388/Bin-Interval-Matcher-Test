@@ -39,6 +39,25 @@ export default function App() {
   };
 
   const parseExcelData = (buffer: ArrayBuffer, name: string, auto: boolean = false) => {
+    let errorMessages: string[] = [];
+    
+    const processWorkbook = (wb: XLSX.WorkBook) => {
+       if (!wb.SheetNames.length) throw new Error("Excel没有工作表");
+        
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const jsonData = XLSX.utils.sheet_to_json<ExcelRow>(ws);
+        
+        if (jsonData.length === 0) throw new Error("数据为空");
+
+        setData(jsonData);
+        setFileName(name);
+        setIsAutoLoaded(auto);
+        setMatchResult(null);
+        setLoadError(null);
+        return true;
+    };
+
     try {
       const dataArr = new Uint8Array(buffer);
 
@@ -54,43 +73,44 @@ export default function App() {
       const isOle = dataArr[0] === 0xD0 && dataArr[1] === 0xCF && dataArr[2] === 0x11 && dataArr[3] === 0xE0;
 
       if (!isZip && !isOle) {
-        // 如果不是二进制格式，可能是 Git LFS 指针或 HTML 错误页
         const textDecoder = new TextDecoder("utf-8");
         const startText = textDecoder.decode(dataArr.slice(0, 50));
         let errorMsg = `文件头校验失败: [${header}]`;
         
         if (startText.includes("version https://git-lfs")) {
-          errorMsg += " (检测到 Git LFS 指针文件，而非真实文件)";
+          errorMsg += " (检测到 Git LFS 指针文件)";
         } else if (startText.trim().startsWith("<!DOCTYPE") || startText.includes("<html")) {
           errorMsg += " (检测到 HTML 内容，可能是 404 页面)";
         }
         throw new Error(errorMsg);
       }
 
-      // 切换到 binary string 模式解析，以匹配 FileUpload 组件的行为
-      // 有时 type: 'array' 在特定版本的 xlsx 库中会出现 "Compression method NaN" 错误
-      let bstr = "";
-      const len = dataArr.byteLength;
-      for (let i = 0; i < len; i++) {
-        bstr += String.fromCharCode(dataArr[i]);
+      // 尝试方法 1: 直接读取 ArrayBuffer
+      try {
+        const workbook = XLSX.read(dataArr, { type: 'array' });
+        return processWorkbook(workbook);
+      } catch (e: any) {
+        console.warn("Attempt 1 (array) failed:", e.message);
+        errorMessages.push(`Array解析失败: ${e.message}`);
       }
 
-      const workbook = XLSX.read(bstr, { type: 'binary' });
-      
-      if (!workbook.SheetNames.length) throw new Error("Excel没有工作表");
-      
-      const wsname = workbook.SheetNames[0];
-      const ws = workbook.Sheets[wsname];
-      const jsonData = XLSX.utils.sheet_to_json<ExcelRow>(ws);
-      
-      if (jsonData.length === 0) throw new Error("数据为空");
+      // 尝试方法 2: 转为 Binary String 读取
+      try {
+        let bstr = "";
+        const len = dataArr.byteLength;
+        // 使用分块处理防止栈溢出，虽然 300k 不会
+        for (let i = 0; i < len; i++) {
+          bstr += String.fromCharCode(dataArr[i]);
+        }
+        const workbook = XLSX.read(bstr, { type: 'binary' });
+        return processWorkbook(workbook);
+      } catch (e: any) {
+        console.warn("Attempt 2 (binary) failed:", e.message);
+        errorMessages.push(`Binary解析失败: ${e.message}`);
+      }
 
-      setData(jsonData);
-      setFileName(name);
-      setIsAutoLoaded(auto);
-      setMatchResult(null);
-      setLoadError(null);
-      return true;
+      throw new Error(errorMessages.join("; "));
+
     } catch (error: any) {
       console.error("Error parsing excel", error);
       const msg = error.message || "未知错误";
@@ -141,12 +161,11 @@ export default function App() {
             if (success) {
               addLog(`✅ 成功加载并解析: ${filePath}`);
               setIsLoading(false);
-              // 将日志保存以便查看（虽然成功了）
               setDebugInfo(prev => [...prev, ...logs]);
               return; 
             }
           } catch (parseErr: any) {
-             addLog(`❌ 解析异常: ${parseErr.message}`);
+             addLog(`❌ 解析过程异常: ${parseErr.message}`);
           }
         } else {
            addLog(`❌ 请求失败`);
